@@ -11,6 +11,7 @@ Status convention (không dùng True/False mơ hồ):
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Literal
 
 from google.genai import types
@@ -21,6 +22,50 @@ from core.config import ALLOWED_TOPICS, BLOCKED_TOPICS
 
 # Quyết định rõ ràng — tránh đảo nghĩa True/False
 InputStatus = Literal["ALLOW", "BLOCK"]
+
+_INVISIBLE = re.compile(r"[​-‏⁠﻿­]")
+
+
+def _normalize(text: str) -> str:
+    """NFKC + strip invisible chars + strip Vietnamese diacritics + collapse spaces."""
+    text = _INVISIBLE.sub("", unicodedata.normalize("NFKC", text or ""))
+    text = text.replace("đ", "d").replace("Đ", "D")
+    text = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", text).lower().strip()
+
+
+# Fail-safe policy: block over miss. Any credential mention is blocked; a
+# forgot-password request gets a reset-flow hint instead of a bare refusal.
+INJECTION_PATTERNS = [
+    r"\b(ignore|disregard|forget|override)\b.{0,30}\b(previous|prior|above|earlier|all)\b.{0,20}\b(instructions?|rules?|prompts?)",
+    r"\byou are now\b",
+    r"\bsystem prompt\b",
+    r"\b(reveal|show|print|repeat|leak)\b.{0,20}\b(your|the)\b.{0,15}\b(instructions?|prompt|config)",
+    r"\bpretend (you are|to be)\b",
+    r"\bact as\b.{0,15}\b(unrestricted|jailbroken|dan|developer mode)",
+    r"\b(dan|developer mode|jailbreak)\b",
+    r"\bpassword\b|\bapi[ _-]?key\b|\bcredentials?\b|\bmat khau\b",
+    r"bo qua (tat ca )?(cac )?(huong dan|chi dan)",
+    r"(tiet lo|cho (toi )?xem) (mat khau|prompt)",
+    # SQL injection: real SQL shapes only, so "update my phone from the app" still passes
+    r"\bselect\s+(\*|\w+(\s*,\s*\w+)*)\s+from\s+\w+|\bdrop\s+table\b|\binsert\s+into\b|\bdelete\s+from\b|\bupdate\s+\w+\s+set\b|\bunion\s+(all\s+)?select\b|;\s*--|'\s*or\s+'?1'?\s*=\s*'?1",
+]
+
+FORGOT_PASSWORD_PATTERN = (
+    r"\b(forgot|forget|lost|reset|recover|quen|lay lai|khoi phuc|doi)\b.{0,25}\b(password|mat khau|pin)\b"
+)
+
+FORGOT_PASSWORD_MESSAGE = (
+    "Để bảo mật, tôi không xử lý mật khẩu qua chat. Nếu bạn quên mật khẩu, vui lòng "
+    "bấm 'Quên mật khẩu' trên màn hình đăng nhập ứng dụng VinBank, hoặc gọi hotline "
+    "1900 545 467 (08:00–22:00) để được hỗ trợ đặt lại."
+)
+INJECTION_MESSAGE = "I cannot process that request. I can only help with VinBank banking questions."
+TOPIC_MESSAGE = "I'm a VinBank assistant and can only help with banking-related questions."
+
+
+def is_forgot_password(user_input: str) -> bool:
+    return re.search(FORGOT_PASSWORD_PATTERN, _normalize(user_input)) is not None
 
 
 # ============================================================
@@ -51,16 +96,12 @@ def detect_injection(user_input: str) -> InputStatus:
     Returns:
         ``"BLOCK"`` if injection detected (chặn), ``"ALLOW"`` otherwise (cho qua).
     """
-    INJECTION_PATTERNS = [
-        # TODO: Add at least 5 regex patterns
-        # Example:
-        # r"ignore (all )?(previous|above) instructions",
-    ]
-
-    for pattern in INJECTION_PATTERNS:
-        if re.search(pattern, user_input, re.IGNORECASE):
-            return "BLOCK"
-    return "ALLOW"
+    # TODO: Add at least 5 regex patterns
+    # Example:
+    # r"ignore (all )?(previous|above) instructions",
+    # -> implemented in module-level INJECTION_PATTERNS (applied after _normalize)
+    text = _normalize(user_input)
+    return "BLOCK" if any(re.search(p, text) for p in INJECTION_PATTERNS) else "ALLOW"
 
 
 # ============================================================
@@ -84,14 +125,16 @@ def topic_filter(user_input: str) -> InputStatus:
         ``"BLOCK"`` = chặn (off-topic hoặc topic cấm).
         ``"ALLOW"`` = cho qua (câu banking hợp lệ).
     """
-    input_lower = user_input.lower()
-
     # TODO: Implement logic:
     # 1. If input contains any blocked topic -> return "BLOCK"
     # 2. If input doesn't contain any allowed topic -> return "BLOCK"
     # 3. Otherwise -> return "ALLOW"
-
-    pass  # Replace with your implementation
+    text = _normalize(user_input)
+    # Prefix word boundary: "accounts" matches "account", "skill" does not match "kill".
+    has = lambda words: any(re.search(rf"\b{re.escape(w)}", text) for w in words)
+    if not text or has(BLOCKED_TOPICS):
+        return "BLOCK"
+    return "ALLOW" if has(ALLOWED_TOPICS) else "BLOCK"
 
 
 # ============================================================
@@ -150,8 +193,14 @@ class InputGuardrailPlugin(base_plugin.BasePlugin):
         # 2. Call topic_filter(text)
         #    - If "BLOCK": increment blocked_count, return self._block_response("...")
         # 3. If both return "ALLOW": return None (let message through)
-
-        pass  # Replace with your implementation
+        if detect_injection(text) == "BLOCK":
+            self.blocked_count += 1
+            msg = FORGOT_PASSWORD_MESSAGE if is_forgot_password(text) else INJECTION_MESSAGE
+            return self._block_response(msg)
+        if topic_filter(text) == "BLOCK":
+            self.blocked_count += 1
+            return self._block_response(TOPIC_MESSAGE)
+        return None
 
 
 # ============================================================
