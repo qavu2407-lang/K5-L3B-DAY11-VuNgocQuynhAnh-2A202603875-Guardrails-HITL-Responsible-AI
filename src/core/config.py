@@ -100,11 +100,18 @@ except FileNotFoundError:
 # ---------------------------------------------------------------------------
 
 def get_blue_provider() -> str:
-    return BLUE_PROVIDER
+    return "liquid" if os.environ.get("LIQUID_API_KEY", "").strip() else BLUE_PROVIDER
+
+
+def get_liquid_api_key() -> str:
+    return os.environ.get("LIQUID_API_KEY", "").strip()
 
 
 def get_blue_model() -> str:
-    # Hard-locked; env cannot override for the graded Blue Team path.
+    # Same lab model lfm-3-1.7b, served either via OpenRouter or Liquid's own API.
+    # Liquid's OpenAI-compatible endpoint names it "lfm3-1.7b" (no slash/`:free`).
+    if get_liquid_api_key():
+        return os.environ.get("LIQUID_MODEL", "lfm3-1.7b").strip() or "lfm3-1.7b"
     return BLUE_MODEL
 
 
@@ -113,7 +120,15 @@ def get_openrouter_api_key() -> str:
 
 
 def blue_client_kwargs() -> dict:
-    """OpenAI SDK kwargs pointing at OpenRouter (Blue Team only)."""
+    """OpenAI SDK kwargs for Blue. Prefer Liquid's direct API (coach-provided key,
+    no free-tier 429s); fall back to OpenRouter when LIQUID_API_KEY is absent."""
+    if get_liquid_api_key():
+        return {
+            "api_key": get_liquid_api_key(),
+            "base_url": os.environ.get(
+                "LIQUID_BASE_URL", "https://api.liquid.ai/openai/v1"
+            ).strip() or "https://api.liquid.ai/openai/v1",
+        }
     return {
         "api_key": get_openrouter_api_key() or None,
         "base_url": (
@@ -236,7 +251,8 @@ def is_harder_model() -> bool:
 
 def setup_api_key():
     """Ensure keys for Blue (OpenRouter) + Red / Red Advance (OpenAI or Gemini)."""
-    if not get_openrouter_api_key():
+    # Blue key: Liquid direct API (coach-provided) takes precedence; else OpenRouter.
+    if not get_liquid_api_key() and not get_openrouter_api_key():
         os.environ["OPENROUTER_API_KEY"] = input(
             "Enter OpenRouter API Key (Blue): "
         ).strip()
