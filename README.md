@@ -1,5 +1,19 @@
 # Day 11 — Controlled Agent Security (2026)
 
+> 🧑‍🎓 **Người nộp:** Vũ Ngọc Quỳnh Anh — **MSSV:** 2A202603875 — Lớp **L3B**
+>
+> **Cách chạy nhanh** (từ gốc repo, sau khi `source .venv/bin/activate`):
+> ```bash
+> pip install -r requirements.txt          # cài deps (gồm NeMo Guardrails cho Red Advance)
+> cp .env.example .env                     # điền OPENROUTER_API_KEY + OPENAI_API_KEY
+> python src/main.py --part 3              # Blue → outputs/results.json, audit_log.json, metrics.json
+> python src/main.py --part 4              # Red + Red Advance → outputs/attack_results.json
+> python scripts/grade.py --submission-dir . --out outputs/grade_report.json
+> ```
+> **Blue:** OpenRouter `liquid/lfm-3-1.7b:free` · **Red/Red Advance:** `gpt-4o-mini`. Bonus nhắm **B1** (leak Red).
+
+---
+
 > 👤 **Hình thức:** bài tập **cá nhân** (1 người / 1 MSSV).  
 > 🎯 **Mục tiêu:** đóng vai **Blue Team** để học cách xây Guardrails phòng thủ, rồi đóng vai **Red Team** để tấn công agent **Red** hoặc **Red Advance**.  
 > ✅ Làm theo **Checkpoint 1 → 5** trong [`CHECKPOINTS.md`](CHECKPOINTS.md) · nộp theo [`SUBMISSION.md`](SUBMISSION.md).
